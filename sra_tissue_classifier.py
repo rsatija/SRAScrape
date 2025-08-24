@@ -127,15 +127,29 @@ def try_fetch_biosample_json(biosample_accession: Optional[str]) -> Optional[Dic
 	return None
 
 
+CANONICAL_TISSUES = [
+	"adipose", "adrenal gland", "artery", "blood", "bone marrow", "brain",
+	"breast", "cervix", "colon", "esophagus", "eye", "fallopian tube",
+	"heart", "kidney", "liver", "lung", "lymph node", "muscle",
+	"nervous system", "ovary", "pancreas", "placenta", "prostate",
+	"salivary gland", "skin", "small intestine", "spleen", "stomach",
+	"testis", "thymus", "thyroid", "tonsil", "uterus", "vagina"
+]
+
+
 def build_prompt(metadata: Dict[str, Any]) -> str:
 	"""Build a concise prompt for Gemini summarization."""
 	context = metadata.get("metadata_text", "")
+	allowed = ", ".join(CANONICAL_TISSUES)
 	prompt = (
-		"You are analyzing scRNA-seq sample metadata to determine tissue/cell-type of origin.\n"
-		"From the metadata below, produce:\n"
-		"1) a five-word summary of the sample's tissue or cell type of origin;\n"
-		"2) the best-guess tissue type as a single concise noun phrase.\n"
-		"Return strict JSON with keys: summary_5_words, tissue_guess.\n\n"
+		"You are analyzing scRNA-seq sample metadata to determine the human tissue of origin.\n"
+		"From the metadata below, produce: \n"
+		"1) summary_5_words: EXACTLY five words summarizing tissue/cell-type of origin;\n"
+		"2) tissue_guess: the closest matching human tissue, chosen EXACTLY from this list: \n"
+		f"[{allowed}]\n"
+		"Mapping rules: map diseases and cell lines to their organ of origin (e.g., 'breast cancer cells' -> 'breast'; 'cardiomyocytes' -> 'heart').\n"
+		"If multiple organs are plausible, pick the single best match.\n"
+		"Return STRICT JSON with keys: summary_5_words, tissue_guess. No extra text.\n\n"
 		f"Metadata:\n{context}\n"
 	)
 	return prompt
@@ -150,7 +164,7 @@ def call_gemini(prompt: str, api_key: str) -> Dict[str, str]:
 	model = genai.GenerativeModel("gemini-1.5-flash")
 	resp = model.generate_content(prompt)
 	text = resp.text or ""
-	# Try to parse JSON; if the model responded with prose, attempt to extract braces
+	# Parse JSON (no semantic postprocessing)
 	data: Dict[str, str]
 	try:
 		data = json.loads(text)
@@ -164,12 +178,8 @@ def call_gemini(prompt: str, api_key: str) -> Dict[str, str]:
 				data = {"summary_5_words": "", "tissue_guess": ""}
 		else:
 			data = {"summary_5_words": "", "tissue_guess": ""}
-	# Normalize fields and trim to 5 words max for summary
+	# Return as-is without trimming or normalization
 	summary = (data.get("summary_5_words") or "").strip()
-	if summary:
-		words = summary.split()
-		if len(words) > 5:
-			summary = " ".join(words[:5])
 	tissue_guess = (data.get("tissue_guess") or "").strip()
 	return {"summary_5_words": summary, "tissue_guess": tissue_guess}
 
